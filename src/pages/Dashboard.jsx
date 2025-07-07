@@ -9,7 +9,9 @@ import {
   Banknote,
   Activity,
   Globe,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ArrowRightLeft
 } from 'lucide-react';
 import {
   LineChart,
@@ -24,7 +26,7 @@ import {
   BarChart,
   Bar
 } from 'recharts';
-import { useHistoricalRates, usePopularPairs, useExchangeRates } from '../hooks/useCurrency';
+import { usePopularPairs, useExchangeRates, useCurrencies } from '../hooks/useCurrency';
 
 // Mock volume data
 const volumeData = [
@@ -37,11 +39,181 @@ const volumeData = [
   { name: 'Sun', volume: 4300 },
 ];
 
+// Currency pair selector component
+function CurrencyPairSelector({ currencies, baseCurrency, targetCurrency, onBaseCurrencyChange, onTargetCurrencyChange, loading }) {
+  const [isBaseOpen, setIsBaseOpen] = useState(false);
+  const [isTargetOpen, setIsTargetOpen] = useState(false);
+
+  const getCurrencyFlag = (currencyCode) => {
+    const flags = {
+      USD: '🇺🇸', EUR: '🇪🇺', GBP: '🇬🇧', JPY: '🇯🇵',
+      CAD: '🇨🇦', AUD: '🇦🇺', CHF: '🇨🇭', CNY: '🇨🇳',
+      INR: '🇮🇳', KRW: '🇰🇷', SGD: '🇸🇬', HKD: '🇭🇰',
+      NOK: '🇳🇴', SEK: '🇸🇪', DKK: '🇩🇰', PLN: '🇵🇱',
+      CZK: '🇨🇿', HUF: '🇭🇺', RUB: '🇷🇺', BRL: '🇧🇷',
+      MXN: '🇲🇽', ZAR: '🇿🇦', TRY: '🇹🇷', NZD: '🇳🇿',
+    };
+    return flags[currencyCode] || '🌍';
+  };
+
+  const swapCurrencies = () => {
+    const temp = baseCurrency;
+    onBaseCurrencyChange(targetCurrency);
+    onTargetCurrencyChange(temp);
+  };
+
+  const CurrencyDropdown = ({ 
+    isOpen, 
+    setIsOpen, 
+    selectedCurrency, 
+    onCurrencySelect, 
+    label,
+    excludeCurrency 
+  }) => (
+    <div className="relative flex-1">
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={loading}
+        className="w-full flex items-center justify-between px-3 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <div className="flex items-center space-x-2">
+          <span className="text-lg">{getCurrencyFlag(selectedCurrency)}</span>
+          <span className="text-sm font-medium text-gray-900">{selectedCurrency}</span>
+        </div>
+        <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+          <div className="p-2">
+            {currencies
+              .filter(currency => currency.code !== excludeCurrency)
+              .map((currency) => (
+                <button
+                  key={currency.code}
+                  onClick={() => {
+                    onCurrencySelect(currency.code);
+                    setIsOpen(false);
+                  }}
+                  className={`flex items-center space-x-2 w-full p-2 rounded-md text-left transition-colors ${
+                    currency.code === selectedCurrency
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'hover:bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  <span className="text-lg">{getCurrencyFlag(currency.code)}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">{currency.code}</p>
+                    <p className="text-xs text-gray-500 truncate">{currency.name}</p>
+                  </div>
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="flex items-end space-x-2">
+      <CurrencyDropdown
+        isOpen={isBaseOpen}
+        setIsOpen={setIsBaseOpen}
+        selectedCurrency={baseCurrency}
+        onCurrencySelect={onBaseCurrencyChange}
+        label="Base Currency"
+        excludeCurrency={targetCurrency}
+      />
+      
+      <button
+        onClick={swapCurrencies}
+        disabled={loading}
+        className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed mb-0.5"
+        title="Swap currencies"
+      >
+        <ArrowRightLeft className="w-4 h-4 text-gray-600" />
+      </button>
+      
+      <CurrencyDropdown
+        isOpen={isTargetOpen}
+        setIsOpen={setIsTargetOpen}
+        selectedCurrency={targetCurrency}
+        onCurrencySelect={onTargetCurrencyChange}
+        label="Target Currency"
+        excludeCurrency={baseCurrency}
+      />
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
-  const { historicalData, loading: historicalLoading } = useHistoricalRates(30);
+  const [baseCurrency, setBaseCurrency] = useState('USD');
+  const [targetCurrency, setTargetCurrency] = useState('EUR');
+  const { currencies, loading: currenciesLoading } = useCurrencies();
   const { pairs, loading: pairsLoading } = usePopularPairs();
   const { rates, loading: ratesLoading } = useExchangeRates('USD');
+
+  // Historical data state
+  const [historicalData, setHistoricalData] = useState([]);
+  const [historicalLoading, setHistoricalLoading] = useState(true);
+  const [currentRate, setCurrentRate] = useState(null);
+
+  useEffect(() => {
+    const loadHistoricalData = async () => {
+      if (!baseCurrency || !targetCurrency || baseCurrency === targetCurrency) return;
+      
+      setHistoricalLoading(true);
+      try {
+        const { getHistoricalRates, convertCurrency } = await import('../services/currencyApi');
+        const endDate = new Date().toISOString().split('T')[0];
+        const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+          .toISOString().split('T')[0];
+
+        // Get historical data
+        const data = await getHistoricalRates(startDate, endDate, baseCurrency, [targetCurrency]);
+        
+        // Get current rate
+        const currentConversion = await convertCurrency(1, baseCurrency, targetCurrency);
+        setCurrentRate(currentConversion.rates[targetCurrency]);
+        
+        // Transform data for charts
+        const chartData = Object.entries(data.rates).map(([date, rates]) => ({
+          date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          rate: rates[targetCurrency] || 0,
+        }));
+
+        setHistoricalData(chartData);
+      } catch (error) {
+        console.error('Error loading historical data:', error);
+        // Fallback data
+        setHistoricalData([]);
+        setCurrentRate(null);
+      } finally {
+        setHistoricalLoading(false);
+      }
+    };
+
+    loadHistoricalData();
+  }, [baseCurrency, targetCurrency]);
+
+  // Calculate rate change
+  const rateChange = historicalData.length > 1 
+    ? ((historicalData[historicalData.length - 1]?.rate - historicalData[0]?.rate) / historicalData[0]?.rate * 100)
+    : 0;
+
+  const getCurrencyFlag = (currencyCode) => {
+    const flags = {
+      USD: '🇺🇸', EUR: '🇪🇺', GBP: '🇬🇧', JPY: '🇯🇵',
+      CAD: '🇨🇦', AUD: '🇦🇺', CHF: '🇨🇭', CNY: '🇨🇳',
+      INR: '🇮🇳', KRW: '🇰🇷', SGD: '🇸🇬', HKD: '🇭🇰',
+      NOK: '🇳🇴', SEK: '🇸🇪', DKK: '🇩🇰', PLN: '🇵🇱',
+      CZK: '🇨🇿', HUF: '🇭🇺', RUB: '🇷🇺', BRL: '🇧🇷',
+      MXN: '🇲🇽', ZAR: '🇿🇦', TRY: '🇹🇷', NZD: '🇳🇿',
+    };
+    return flags[currencyCode] || '🌍';
+  };
 
   return (
     <div className="px-4 sm:px-6 lg:px-8">
@@ -126,50 +298,114 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-        {/* Exchange Rate Chart */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg p-6 border border-blue-100">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">Exchange Rate Trends</h2>
-            <div className="flex items-center space-x-2">
-              <Globe className="w-5 h-5 text-gray-500" />
-              <span className="text-sm text-gray-600">Last 30 days</span>
+        {/* Exchange Rate Chart with Currency Pair Selector */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-lg border border-blue-100">
+          {/* Header */}
+          <div className="p-6 border-b border-gray-100">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-3">
+                <h2 className="text-xl font-semibold text-gray-900">Exchange Rate Trends</h2>
+                <div className="flex items-center space-x-2">
+                  <Globe className="w-5 h-5 text-gray-500" />
+                  <span className="text-sm text-gray-600">Last 30 days</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Currency Pair Selector */}
+            <CurrencyPairSelector
+              currencies={currencies}
+              baseCurrency={baseCurrency}
+              targetCurrency={targetCurrency}
+              onBaseCurrencyChange={setBaseCurrency}
+              onTargetCurrencyChange={setTargetCurrency}
+              loading={currenciesLoading}
+            />
+          </div>
+
+          {/* Current Rate Display */}
+          <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-blue-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-2">
+                  <span className="text-2xl">{getCurrencyFlag(baseCurrency)}</span>
+                  <span className="text-lg font-semibold text-gray-900">{baseCurrency}</span>
+                  <ArrowRightLeft className="w-4 h-4 text-gray-500" />
+                  <span className="text-2xl">{getCurrencyFlag(targetCurrency)}</span>
+                  <span className="text-lg font-semibold text-gray-900">{targetCurrency}</span>
+                </div>
+              </div>
+              <div className="text-right">
+                {historicalLoading ? (
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold text-gray-900">
+                      {currentRate ? currentRate.toFixed(4) : '--'}
+                    </p>
+                    {rateChange !== 0 && (
+                      <div className="flex items-center justify-end space-x-1">
+                        {rateChange > 0 ? (
+                          <TrendingUp className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4 text-red-500" />
+                        )}
+                        <span className={`text-sm font-medium ${
+                          rateChange > 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {rateChange > 0 ? '+' : ''}{rateChange.toFixed(2)}%
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
-          {historicalLoading ? (
-            <div className="flex items-center justify-center h-[300px]">
-              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={historicalData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" stroke="#9ca3af" />
-                <YAxis stroke="#9ca3af" />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                    border: '1px solid #e5e7eb',
-                    borderRadius: '8px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="EUR"
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="GBP"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  dot={{ fill: '#10b981', strokeWidth: 2, r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+
+          {/* Chart */}
+          <div className="p-6">
+            {historicalLoading ? (
+              <div className="flex items-center justify-center h-[300px]">
+                <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+              </div>
+            ) : historicalData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={historicalData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="date" stroke="#9ca3af" />
+                  <YAxis stroke="#9ca3af" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                    }}
+                    formatter={(value) => [
+                      `${parseFloat(value).toFixed(4)}`,
+                      `${baseCurrency}/${targetCurrency}`
+                    ]}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="rate"
+                    stroke="#3b82f6"
+                    strokeWidth={3}
+                    dot={{ fill: '#3b82f6', strokeWidth: 2, r: 5 }}
+                    activeDot={{ r: 7, stroke: '#3b82f6', strokeWidth: 2 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-[300px] text-gray-500">
+                <div className="text-center">
+                  <Globe className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p>No data available for this currency pair</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Volume Chart */}
@@ -222,9 +458,13 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {pairs.map((pair, index) => (
-              <div
+              <button
                 key={index}
-                className="bg-gradient-to-br from-blue-50 to-white p-4 rounded-lg border border-blue-100 hover:shadow-md transition-shadow"
+                onClick={() => {
+                  setBaseCurrency(pair.from);
+                  setTargetCurrency(pair.to);
+                }}
+                className="bg-gradient-to-br from-blue-50 to-white p-4 rounded-lg border border-blue-100 hover:shadow-md transition-all duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium text-gray-600">
@@ -251,7 +491,7 @@ export default function Dashboard() {
                     </span>
                   </div>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
